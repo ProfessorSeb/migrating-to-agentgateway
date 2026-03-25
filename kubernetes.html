@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kubernetes Deployment - LiteLLM to AgentGateway</title>
+  <title>Kubernetes (Kind) Deployment - LiteLLM to AgentGateway</title>
   <link rel="stylesheet" href="css/style.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
@@ -24,9 +24,76 @@
 
 <div class="container">
   <div class="page-header">
-    <h1>Kubernetes Deployment</h1>
-    <p>Replace your LiteLLM Deployment + ConfigMap with AgentGateway. Two paths: raw manifests or Helm + Gateway API.</p>
+    <h1>Kubernetes Deployment on Kind</h1>
+    <p>Hands-on guide: spin up a kind cluster, deploy both LiteLLM and AgentGateway side by side, compare, then migrate.</p>
   </div>
+
+  <!-- Prerequisites -->
+  <section>
+    <h2>Prerequisites</h2>
+    <p>You need these tools installed locally:</p>
+
+    <table>
+      <thead>
+        <tr><th>Tool</th><th>Install</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>docker</code></td>
+          <td><a href="https://docs.docker.com/get-docker/">Docker Desktop</a> or <a href="https://colima.dev">Colima</a></td>
+          <td>Container runtime for kind</td>
+        </tr>
+        <tr>
+          <td><code>kind</code></td>
+          <td><code>brew install kind</code></td>
+          <td>Kubernetes in Docker</td>
+        </tr>
+        <tr>
+          <td><code>kubectl</code></td>
+          <td><code>brew install kubectl</code></td>
+          <td>Kubernetes CLI</td>
+        </tr>
+        <tr>
+          <td><code>helm</code> (optional)</td>
+          <td><code>brew install helm</code></td>
+          <td>For Helm/Gateway API path</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>Set your API keys:</p>
+<pre>export OPENAI_API_KEY="sk-your-key-here"
+export ANTHROPIC_API_KEY="sk-ant-your-key-here"</pre>
+  </section>
+
+  <!-- Quick Start Script -->
+  <section>
+    <h2>Quick Start (One Script)</h2>
+    <p>Clone the repo and run the setup script. It creates a kind cluster with port mappings and deploys AgentGateway with LLM + MCP gateway.</p>
+
+<pre><span class="cmt"># Clone the repo</span>
+git clone https://github.com/ProfessorSeb/migrating-to-agentgateway.git
+cd migrating-to-agentgateway
+
+<span class="cmt"># Set your API keys</span>
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+<span class="cmt"># Run the setup</span>
+./setup-kind.sh</pre>
+
+    <p>This gives you:</p>
+    <ul>
+      <li><strong>LLM Gateway</strong> at <code>http://localhost:4000</code></li>
+      <li><strong>MCP Gateway</strong> at <code>http://localhost:3000</code></li>
+      <li><strong>Admin UI</strong> at <code>http://localhost:15000/ui</code></li>
+    </ul>
+
+    <div class="callout tip">
+      <strong>Want to compare with LiteLLM?</strong>
+      Run <code>./setup-litellm-kind.sh</code> after to deploy LiteLLM in its own namespace on the same cluster. Then compare resource usage side by side.
+    </div>
+  </section>
 
   <!-- Resource Comparison -->
   <section>
@@ -59,10 +126,294 @@
     </div>
   </section>
 
-  <!-- Side-by-side: Raw Manifests -->
+  <!-- Step-by-Step Manual Walkthrough -->
   <section>
-    <h2>Option 1: Raw Kubernetes Manifests</h2>
-    <p>Direct translation of your existing LiteLLM manifests to AgentGateway.</p>
+    <h2>Step-by-Step: Manual Walkthrough</h2>
+    <p>If you prefer to understand each step rather than running the script, here's the full walkthrough.</p>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Create the kind cluster with port mappings</h4>
+        <p>We map host ports 4000 (LLM), 3000 (MCP), and 15000 (Admin UI) into the kind node.</p>
+<pre>cat &lt;&lt;'EOF' | kind create cluster --name agentgateway-demo --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 30400
+    hostPort: 4000
+    protocol: TCP
+  - containerPort: 30300
+    hostPort: 3000
+    protocol: TCP
+  - containerPort: 31500
+    hostPort: 15000
+    protocol: TCP
+EOF</pre>
+      </div>
+
+      <div class="step">
+        <h4>Create the namespace and secrets</h4>
+<pre>kubectl create namespace agentgateway
+
+kubectl -n agentgateway create secret generic agentgateway-secrets \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"</pre>
+      </div>
+
+      <div class="step">
+        <h4>Create the ConfigMap with LLM + MCP config</h4>
+<pre>kubectl -n agentgateway apply -f - &lt;&lt;'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentgateway-config
+  namespace: agentgateway
+data:
+  config.yaml: |
+    binds:
+    # LLM Gateway on port 4000
+    - port: 4000
+      listeners:
+      - name: llm
+        protocol: HTTP
+        routes:
+        - name: models
+          backends:
+          - ai:
+              groups:
+              - providers:
+                - name: gpt-4o
+                  provider:
+                    openAI:
+                      model: gpt-4o
+                      apiKey: "$OPENAI_API_KEY"
+                - name: gpt-4o-mini
+                  provider:
+                    openAI:
+                      model: gpt-4o-mini
+                      apiKey: "$OPENAI_API_KEY"
+              - providers:
+                - name: claude-sonnet
+                  provider:
+                    anthropic:
+                      model: claude-sonnet-4-20250514
+                      apiKey: "$ANTHROPIC_API_KEY"
+                - name: claude-haiku
+                  provider:
+                    anthropic:
+                      model: claude-haiku-4-5-20251001
+                      apiKey: "$ANTHROPIC_API_KEY"
+
+    # MCP Gateway on port 3000
+    - port: 3000
+      listeners:
+      - name: mcp
+        protocol: HTTP
+        routes:
+        - name: tools
+          backends:
+          - mcp:
+              targets:
+              - name: everything
+                stdio:
+                  cmd: npx
+                  args: ["-y", "@modelcontextprotocol/server-everything"]
+EOF</pre>
+      </div>
+
+      <div class="step">
+        <h4>Deploy AgentGateway</h4>
+<pre>kubectl -n agentgateway apply -f - &lt;&lt;'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway
+  namespace: agentgateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentgateway
+  template:
+    metadata:
+      labels:
+        app: agentgateway
+    spec:
+      containers:
+      - name: agentgateway
+        image: cr.agentgateway.dev/agentgateway:latest
+        args: ["-f", "/config/config.yaml"]
+        ports:
+        - containerPort: 4000
+          name: llm
+        - containerPort: 3000
+          name: mcp
+        - containerPort: 15000
+          name: admin
+        envFrom:
+        - secretRef:
+            name: agentgateway-secrets
+        env:
+        - name: ADMIN_ADDR
+          value: "0.0.0.0:15000"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 15000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 15000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "250m"
+            memory: 128Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+      volumes:
+      - name: config
+        configMap:
+          name: agentgateway-config
+EOF</pre>
+      </div>
+
+      <div class="step">
+        <h4>Expose with NodePort Service</h4>
+        <p>NodePort maps to the kind <code>extraPortMappings</code> so ports are accessible on localhost.</p>
+<pre>kubectl -n agentgateway apply -f - &lt;&lt;'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway
+  namespace: agentgateway
+spec:
+  selector:
+    app: agentgateway
+  type: NodePort
+  ports:
+  - name: llm
+    port: 4000
+    targetPort: 4000
+    nodePort: 30400
+  - name: mcp
+    port: 3000
+    targetPort: 3000
+    nodePort: 30300
+  - name: admin
+    port: 15000
+    targetPort: 15000
+    nodePort: 31500
+EOF</pre>
+      </div>
+
+      <div class="step">
+        <h4>Wait for the pod and verify</h4>
+<pre><span class="cmt"># Wait for rollout (~5 seconds)</span>
+kubectl -n agentgateway rollout status deployment/agentgateway
+
+<span class="cmt"># Check the pod</span>
+kubectl -n agentgateway get pods
+
+<span class="cmt"># Test LLM Gateway</span>
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello from Kind!"}]}'
+
+<span class="cmt"># Open Admin UI</span>
+open http://localhost:15000/ui</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Side-by-side with LiteLLM -->
+  <section>
+    <h2>Side-by-Side Comparison on Kind</h2>
+    <p>Deploy LiteLLM in its own namespace on the same cluster to compare resource usage and startup time.</p>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Deploy LiteLLM (same cluster, different namespace)</h4>
+<pre><span class="cmt"># Use the included script</span>
+./setup-litellm-kind.sh
+
+<span class="cmt"># Or manually:</span>
+kubectl create namespace litellm
+
+kubectl -n litellm create secret generic litellm-secrets \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  --from-literal=LITELLM_MASTER_KEY="sk-1234"</pre>
+      </div>
+
+      <div class="step">
+        <h4>Compare startup times</h4>
+<pre><span class="cmt"># AgentGateway: ready in ~5 seconds</span>
+kubectl -n agentgateway get pods
+
+<span class="cmt"># LiteLLM: ready in ~2 minutes</span>
+kubectl -n litellm get pods
+
+<span class="cmt"># Watch both</span>
+kubectl get pods -A -l 'app in (agentgateway,litellm)' -w</pre>
+      </div>
+
+      <div class="step">
+        <h4>Compare resource usage</h4>
+<pre><span class="cmt"># Install metrics-server if not present</span>
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch deployment metrics-server -n kube-system \
+  --type='json' \
+  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+
+<span class="cmt"># Wait a minute, then compare</span>
+echo "=== AgentGateway ==="
+kubectl -n agentgateway top pods
+
+echo "=== LiteLLM ==="
+kubectl -n litellm top pods</pre>
+      </div>
+
+      <div class="step">
+        <h4>Test both (same API, different ports)</h4>
+<pre><span class="cmt"># Port-forward LiteLLM to a different port</span>
+kubectl -n litellm port-forward svc/litellm 4001:4000 &amp;
+
+<span class="cmt"># Test AgentGateway (port 4000)</span>
+echo "=== AgentGateway ==="
+time curl -s http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Say hi"}]}' | head -c 200
+
+echo ""
+
+<span class="cmt"># Test LiteLLM (port 4001)</span>
+echo "=== LiteLLM ==="
+time curl -s http://localhost:4001/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-1234" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Say hi"}]}' | head -c 200</pre>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Same API, different characteristics</strong>
+      Both expose OpenAI-compatible endpoints. The difference is in resource consumption, startup time, and the additional features AgentGateway provides (MCP gateway, admin UI, health-based eviction).
+    </div>
+  </section>
+
+  <!-- Manifest Comparison -->
+  <section>
+    <h2>Manifest Comparison: LiteLLM vs AgentGateway</h2>
 
     <h3>ConfigMap</h3>
     <div class="comparison">
@@ -114,148 +465,68 @@
       </div>
     </div>
 
-    <h3>Secret</h3>
-    <div class="comparison">
-      <div class="panel from">
-        <div class="panel-header">&#10005; LiteLLM Secret</div>
-<pre><span class="key">apiVersion</span>: <span class="str">v1</span>
-<span class="key">kind</span>: <span class="str">Secret</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">litellm-secrets</span>
-<span class="key">type</span>: <span class="str">Opaque</span>
-<span class="key">stringData</span>:
-  <span class="key">OPENAI_API_KEY</span>: <span class="str">"sk-..."</span>
-  <span class="key">ANTHROPIC_API_KEY</span>: <span class="str">"sk-ant-..."</span>
-  <span class="key">LITELLM_MASTER_KEY</span>: <span class="str">"sk-1234"</span></pre>
-      </div>
-
-      <div class="panel to">
-        <div class="panel-header">&#10003; AgentGateway Secret</div>
-<pre><span class="key">apiVersion</span>: <span class="str">v1</span>
-<span class="key">kind</span>: <span class="str">Secret</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">agentgateway-secrets</span>
-<span class="key">type</span>: <span class="str">Opaque</span>
-<span class="key">stringData</span>:
-  <span class="key">OPENAI_API_KEY</span>: <span class="str">"sk-..."</span>
-  <span class="key">ANTHROPIC_API_KEY</span>: <span class="str">"sk-ant-..."</span>
-  <span class="cmt"># No master key needed</span></pre>
-      </div>
-    </div>
-
     <h3>Deployment</h3>
     <div class="comparison">
       <div class="panel from">
         <div class="panel-header">&#10005; LiteLLM Deployment</div>
-<pre><span class="key">apiVersion</span>: <span class="str">apps/v1</span>
-<span class="key">kind</span>: <span class="str">Deployment</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">litellm</span>
-<span class="key">spec</span>:
-  <span class="key">replicas</span>: <span class="num">2</span>
-  <span class="key">selector</span>:
-    <span class="key">matchLabels</span>:
-      <span class="key">app</span>: <span class="str">litellm</span>
-  <span class="key">template</span>:
-    <span class="key">spec</span>:
-      <span class="key">containers</span>:
-      - <span class="key">name</span>: <span class="str">litellm</span>
-        <span class="key">image</span>: <span class="str">docker.litellm.ai/berriai/litellm:main-stable</span>
-        <span class="key">args</span>: [<span class="str">"--config"</span>, <span class="str">"/app/config.yaml"</span>, <span class="str">"--port"</span>, <span class="str">"4000"</span>]
-        <span class="key">ports</span>:
-        - <span class="key">containerPort</span>: <span class="num">4000</span>
-        <span class="key">envFrom</span>:
-        - <span class="key">secretRef</span>:
-            <span class="key">name</span>: <span class="str">litellm-secrets</span>
-        <span class="key">volumeMounts</span>:
-        - <span class="key">name</span>: <span class="str">config</span>
-          <span class="key">mountPath</span>: <span class="str">/app/config.yaml</span>
-          <span class="key">subPath</span>: <span class="str">config.yaml</span>
-        <span class="key">livenessProbe</span>:
-          <span class="key">httpGet</span>:
-            <span class="key">path</span>: <span class="str">/health/liveliness</span>
-            <span class="key">port</span>: <span class="num">4000</span>
-          <span class="key">initialDelaySeconds</span>: <span class="num">120</span>
-        <span class="key">readinessProbe</span>:
-          <span class="key">httpGet</span>:
-            <span class="key">path</span>: <span class="str">/health/readiness</span>
-            <span class="key">port</span>: <span class="num">4000</span>
-          <span class="key">initialDelaySeconds</span>: <span class="num">120</span>
-        <span class="key">resources</span>:
-          <span class="key">requests</span>:
-            <span class="key">cpu</span>: <span class="str">"2"</span>
-            <span class="key">memory</span>: <span class="str">4Gi</span>
-          <span class="key">limits</span>:
-            <span class="key">cpu</span>: <span class="str">"4"</span>
-            <span class="key">memory</span>: <span class="str">8Gi</span>
-      <span class="key">volumes</span>:
-      - <span class="key">name</span>: <span class="str">config</span>
-        <span class="key">configMap</span>:
-          <span class="key">name</span>: <span class="str">litellm-config</span></pre>
+<pre><span class="key">containers</span>:
+- <span class="key">name</span>: <span class="str">litellm</span>
+  <span class="key">image</span>: <span class="str">docker.litellm.ai/berriai/litellm:main-stable</span>
+  <span class="key">args</span>: [<span class="str">"--config"</span>, <span class="str">"/app/config.yaml"</span>]
+  <span class="key">ports</span>:
+  - <span class="key">containerPort</span>: <span class="num">4000</span>
+  <span class="key">readinessProbe</span>:
+    <span class="key">httpGet</span>:
+      <span class="key">path</span>: <span class="str">/health/readiness</span>
+      <span class="key">port</span>: <span class="num">4000</span>
+    <span class="key">initialDelaySeconds</span>: <span class="num">120</span>  <span class="cmt"># 2 minutes!</span>
+  <span class="key">resources</span>:
+    <span class="key">requests</span>:
+      <span class="key">cpu</span>: <span class="str">"2"</span>
+      <span class="key">memory</span>: <span class="str">4Gi</span>
+    <span class="key">limits</span>:
+      <span class="key">cpu</span>: <span class="str">"4"</span>
+      <span class="key">memory</span>: <span class="str">8Gi</span></pre>
       </div>
 
       <div class="panel to">
         <div class="panel-header">&#10003; AgentGateway Deployment</div>
-<pre><span class="key">apiVersion</span>: <span class="str">apps/v1</span>
-<span class="key">kind</span>: <span class="str">Deployment</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">agentgateway</span>
-<span class="key">spec</span>:
-  <span class="key">replicas</span>: <span class="num">2</span>
-  <span class="key">selector</span>:
-    <span class="key">matchLabels</span>:
-      <span class="key">app</span>: <span class="str">agentgateway</span>
-  <span class="key">template</span>:
-    <span class="key">spec</span>:
-      <span class="key">containers</span>:
-      - <span class="key">name</span>: <span class="str">agentgateway</span>
-        <span class="key">image</span>: <span class="str">cr.agentgateway.dev/agentgateway:latest</span>
-        <span class="key">args</span>: [<span class="str">"-f"</span>, <span class="str">"/config/config.yaml"</span>]
-        <span class="key">ports</span>:
-        - <span class="key">containerPort</span>: <span class="num">4000</span>
-          <span class="key">name</span>: <span class="str">llm</span>
-        - <span class="key">containerPort</span>: <span class="num">15000</span>
-          <span class="key">name</span>: <span class="str">admin</span>
-        <span class="key">envFrom</span>:
-        - <span class="key">secretRef</span>:
-            <span class="key">name</span>: <span class="str">agentgateway-secrets</span>
-        <span class="key">volumeMounts</span>:
-        - <span class="key">name</span>: <span class="str">config</span>
-          <span class="key">mountPath</span>: <span class="str">/config</span>
-        <span class="key">livenessProbe</span>:
-          <span class="key">httpGet</span>:
-            <span class="key">path</span>: <span class="str">/healthz</span>
-            <span class="key">port</span>: <span class="num">15000</span>
-          <span class="key">initialDelaySeconds</span>: <span class="num">5</span>
-        <span class="key">readinessProbe</span>:
-          <span class="key">httpGet</span>:
-            <span class="key">path</span>: <span class="str">/healthz</span>
-            <span class="key">port</span>: <span class="num">15000</span>
-          <span class="key">initialDelaySeconds</span>: <span class="num">5</span>
-        <span class="key">resources</span>:
-          <span class="key">requests</span>:
-            <span class="key">cpu</span>: <span class="str">"250m"</span>
-            <span class="key">memory</span>: <span class="str">128Mi</span>
-          <span class="key">limits</span>:
-            <span class="key">cpu</span>: <span class="str">"1"</span>
-            <span class="key">memory</span>: <span class="str">512Mi</span>
-      <span class="key">volumes</span>:
-      - <span class="key">name</span>: <span class="str">config</span>
-        <span class="key">configMap</span>:
-          <span class="key">name</span>: <span class="str">agentgateway-config</span></pre>
+<pre><span class="key">containers</span>:
+- <span class="key">name</span>: <span class="str">agentgateway</span>
+  <span class="key">image</span>: <span class="str">cr.agentgateway.dev/agentgateway:latest</span>
+  <span class="key">args</span>: [<span class="str">"-f"</span>, <span class="str">"/config/config.yaml"</span>]
+  <span class="key">ports</span>:
+  - <span class="key">containerPort</span>: <span class="num">4000</span>
+  - <span class="key">containerPort</span>: <span class="num">3000</span>   <span class="cmt"># MCP too!</span>
+  - <span class="key">containerPort</span>: <span class="num">15000</span>  <span class="cmt"># Admin UI</span>
+  <span class="key">readinessProbe</span>:
+    <span class="key">httpGet</span>:
+      <span class="key">path</span>: <span class="str">/healthz</span>
+      <span class="key">port</span>: <span class="num">15000</span>
+    <span class="key">initialDelaySeconds</span>: <span class="num">5</span>   <span class="cmt"># 5 seconds!</span>
+  <span class="key">resources</span>:
+    <span class="key">requests</span>:
+      <span class="key">cpu</span>: <span class="str">"250m"</span>
+      <span class="key">memory</span>: <span class="str">128Mi</span>
+    <span class="key">limits</span>:
+      <span class="key">cpu</span>: <span class="str">"1"</span>
+      <span class="key">memory</span>: <span class="str">512Mi</span></pre>
       </div>
     </div>
   </section>
 
   <!-- Option 2: Helm + Gateway API -->
   <section>
-    <h2>Option 2: Helm + Gateway API (Recommended)</h2>
-    <p>For production Kubernetes deployments, AgentGateway integrates with the Kubernetes Gateway API through its control plane (kgateway).</p>
+    <h2>Production Path: Helm + Gateway API</h2>
+    <p>For production Kubernetes, AgentGateway integrates with Kubernetes Gateway API through its control plane (kgateway). This also works on kind.</p>
 
     <div class="steps">
       <div class="step">
-        <h4>Install AgentGateway with Helm</h4>
-<pre><span class="cmt"># Add the Helm repository</span>
+        <h4>Install AgentGateway with Helm on kind</h4>
+<pre><span class="cmt"># Make sure your kind cluster is running</span>
+kubectl cluster-info --context kind-agentgateway-demo
+
+<span class="cmt"># Add the Helm repository</span>
 helm repo add agentgateway https://agentgateway.dev/charts
 helm repo update
 
@@ -267,107 +538,104 @@ helm install agentgateway agentgateway/agentgateway \
 
       <div class="step">
         <h4>Create a Gateway resource</h4>
-<pre><span class="key">apiVersion</span>: <span class="str">gateway.networking.k8s.io/v1</span>
-<span class="key">kind</span>: <span class="str">Gateway</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">ai-gateway</span>
-  <span class="key">namespace</span>: <span class="str">default</span>
-<span class="key">spec</span>:
-  <span class="key">gatewayClassName</span>: <span class="str">agentgateway</span>
-  <span class="key">listeners</span>:
-  - <span class="key">name</span>: <span class="str">llm</span>
-    <span class="key">port</span>: <span class="num">4000</span>
-    <span class="key">protocol</span>: <span class="val">HTTP</span></pre>
+<pre>kubectl apply -f - &lt;&lt;'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ai-gateway
+  namespace: default
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+  - name: llm
+    port: 4000
+    protocol: HTTP
+EOF</pre>
       </div>
 
       <div class="step">
         <h4>Define backends with CRDs</h4>
-<pre><span class="key">apiVersion</span>: <span class="str">agentgateway.dev/v1alpha1</span>
-<span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">openai</span>
-<span class="key">spec</span>:
-  <span class="key">ai</span>:
-    <span class="key">provider</span>:
-      <span class="key">openai</span>:
-        <span class="key">model</span>: <span class="str">"gpt-4o"</span>
-  <span class="key">policies</span>:
-    <span class="key">auth</span>:
-      <span class="key">secretRef</span>:
-        <span class="key">name</span>: <span class="str">openai-secret</span>
+<pre>kubectl apply -f - &lt;&lt;'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openai-secret
+stringData:
+  apiKey: "$OPENAI_API_KEY"
 ---
-<span class="key">apiVersion</span>: <span class="str">agentgateway.dev/v1alpha1</span>
-<span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">anthropic</span>
-<span class="key">spec</span>:
-  <span class="key">ai</span>:
-    <span class="key">provider</span>:
-      <span class="key">anthropic</span>:
-        <span class="key">model</span>: <span class="str">"claude-sonnet-4-20250514"</span>
-  <span class="key">policies</span>:
-    <span class="key">auth</span>:
-      <span class="key">secretRef</span>:
-        <span class="key">name</span>: <span class="str">anthropic-secret</span></pre>
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-secret
+stringData:
+  apiKey: "$ANTHROPIC_API_KEY"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openai
+spec:
+  ai:
+    provider:
+      openai:
+        model: "gpt-4o"
+  policies:
+    auth:
+      secretRef:
+        name: openai-secret
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-20250514"
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-secret
+EOF</pre>
       </div>
 
       <div class="step">
-        <h4>Create HTTPRoute to wire it together</h4>
-<pre><span class="key">apiVersion</span>: <span class="str">gateway.networking.k8s.io/v1</span>
-<span class="key">kind</span>: <span class="str">HTTPRoute</span>
-<span class="key">metadata</span>:
-  <span class="key">name</span>: <span class="str">llm-route</span>
-<span class="key">spec</span>:
-  <span class="key">parentRefs</span>:
-  - <span class="key">name</span>: <span class="str">ai-gateway</span>
-  <span class="key">rules</span>:
-  - <span class="key">backendRefs</span>:
-    - <span class="key">group</span>: <span class="str">agentgateway.dev</span>
-      <span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
-      <span class="key">name</span>: <span class="str">openai</span>
-    - <span class="key">group</span>: <span class="str">agentgateway.dev</span>
-      <span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
-      <span class="key">name</span>: <span class="str">anthropic</span></pre>
+        <h4>Create HTTPRoute</h4>
+<pre>kubectl apply -f - &lt;&lt;'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-route
+spec:
+  parentRefs:
+  - name: ai-gateway
+  rules:
+  - backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: openai
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: anthropic
+EOF</pre>
       </div>
     </div>
 
     <div class="callout">
       <strong>Why Gateway API?</strong>
-      Using Gateway API CRDs means your AI gateway integrates with the same infrastructure tooling as your HTTP gateways. Config changes are dynamic (xDS push), no restart needed. You also get RBAC, multi-tenancy, and fleet management built in.
+      Gateway API CRDs integrate your AI gateway with the same infrastructure tooling as HTTP gateways. Config changes are dynamic via xDS (no restart). You get RBAC, multi-tenancy, and fleet management built in.
     </div>
   </section>
 
-  <!-- Migration Checklist -->
+  <!-- Cleanup -->
   <section>
-    <h2>K8s Migration Checklist</h2>
+    <h2>Cleanup</h2>
+<pre><span class="cmt"># Delete everything</span>
+./cleanup-kind.sh
 
-    <div class="steps">
-      <div class="step">
-        <h4>Translate ConfigMap contents</h4>
-        <p>Convert your LiteLLM <code>config.yaml</code> to AgentGateway format (see <a href="llm-gateway.html">LLM Gateway</a> and <a href="mcp-gateway.html">MCP Gateway</a> pages).</p>
-      </div>
-      <div class="step">
-        <h4>Update Secrets</h4>
-        <p>Remove <code>LITELLM_MASTER_KEY</code>. Keep <code>OPENAI_API_KEY</code> and <code>ANTHROPIC_API_KEY</code> (same names work).</p>
-      </div>
-      <div class="step">
-        <h4>Swap the Deployment</h4>
-        <p>Change image, args, resource limits, and probes. Drop <code>initialDelaySeconds</code> from 120s to 5s.</p>
-      </div>
-      <div class="step">
-        <h4>Update Service</h4>
-        <p>Add admin port (15000) if you want the built-in UI. LLM port stays at 4000.</p>
-      </div>
-      <div class="step">
-        <h4>Verify</h4>
-        <p>Run the same curl test against the Service. No client changes needed.</p>
-<pre>kubectl port-forward svc/agentgateway 4000:4000 &amp;
-
-curl http://localhost:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'</pre>
-      </div>
-    </div>
+<span class="cmt"># Or manually:</span>
+kind delete cluster --name agentgateway-demo</pre>
   </section>
 
   <section>
