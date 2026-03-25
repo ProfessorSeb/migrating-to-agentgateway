@@ -1,0 +1,50 @@
+# AgentGateway OSS - Advanced LLM Gateway Configuration
+# With failover groups, health checks, and route matching
+
+binds:
+- port: 4000
+  listeners:
+  - name: llm-gateway
+    protocol: HTTP
+    routes:
+    # Route 1: Default route with failover (Anthropic primary, OpenAI fallback)
+    - name: default
+      backends:
+      - ai:
+          groups:
+          # Primary group: Anthropic
+          - providers:
+            - name: claude-sonnet
+              provider:
+                anthropic:
+                  model: claude-sonnet-4-20250514
+                  apiKey: "$ANTHROPIC_API_KEY"
+              health:
+                unhealthyExpression: "response.code >= 500 || response.code == 429"
+                eviction:
+                  duration: 30s
+          # Fallback group: OpenAI
+          - providers:
+            - name: gpt-4o
+              provider:
+                openAI:
+                  model: gpt-4o
+                  apiKey: "$OPENAI_API_KEY"
+              health:
+                unhealthyExpression: "response.code >= 500 || response.code == 429"
+                eviction:
+                  duration: 30s
+
+      policies:
+        ai:
+          promptEnrichment:
+            prepend:
+            - role: system
+              content: "You are a helpful assistant."
+
+frontendPolicies:
+  accessLog:
+    add:
+      backend: backend
+  tracing:
+    host: localhost:4317

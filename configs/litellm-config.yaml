@@ -1,0 +1,46 @@
+# LiteLLM Proxy Configuration
+# Typical setup for OpenAI + Anthropic LLM Gateway
+
+model_list:
+  # --- OpenAI Models ---
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  # --- Anthropic Models ---
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+general_settings:
+  master_key: sk-1234
+
+litellm_settings:
+  num_retries: 3
+  request_timeout: 30
+  fallbacks:
+    - claude-sonnet: [gpt-4o]
+    - gpt-4o: [claude-sonnet]
+  drop_params: true
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 30

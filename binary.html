@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Binary & Docker Deployment - LiteLLM to AgentGateway</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo"><span>&gt;_</span> Migrate to AgentGateway</div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="llm-gateway.html">LLM Gateway</a></li>
+      <li><a href="mcp-gateway.html">MCP Gateway</a></li>
+      <li><a href="kubernetes.html">Kubernetes</a></li>
+      <li><a href="binary.html" class="active">Binary</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-header">
+    <h1>Binary & Docker Deployment</h1>
+    <p>Replace your LiteLLM Python process with a single AgentGateway binary. No pip, no virtualenv, no Python runtime.</p>
+  </div>
+
+  <!-- Binary Install -->
+  <section>
+    <h2>Option 1: Binary Install</h2>
+
+    <h3>Before: LiteLLM</h3>
+<pre><span class="cmt"># Install LiteLLM</span>
+pip install 'litellm[proxy]'
+
+<span class="cmt"># Run the proxy</span>
+litellm --config config.yaml --port 4000</pre>
+
+    <h3>After: AgentGateway</h3>
+<pre><span class="cmt"># Install AgentGateway (one command, no dependencies)</span>
+curl -sL https://agentgateway.dev/install | bash
+
+<span class="cmt"># Run the gateway</span>
+agentgateway -f config.yaml</pre>
+
+    <div class="callout tip">
+      <strong>That's it.</strong>
+      No Python, no pip, no virtual environment, no dependency conflicts. One static binary for macOS (Intel/ARM), Linux (x86/ARM), and Windows.
+    </div>
+
+    <h3>Install a Specific Version</h3>
+<pre>curl -sL https://agentgateway.dev/install | bash -s -- --version 1.0.0</pre>
+
+    <h3>Supported Platforms</h3>
+    <table>
+      <thead>
+        <tr><th>Platform</th><th>Architecture</th><th>Binary</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>macOS</td><td>Apple Silicon (M1+)</td><td><code>darwin-arm64</code></td></tr>
+        <tr><td>macOS</td><td>Intel</td><td><code>darwin-amd64</code></td></tr>
+        <tr><td>Linux</td><td>x86_64</td><td><code>linux-amd64</code></td></tr>
+        <tr><td>Linux</td><td>ARM64</td><td><code>linux-arm64</code></td></tr>
+        <tr><td>Windows</td><td>x86_64</td><td><code>windows-amd64</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Docker -->
+  <section>
+    <h2>Option 2: Docker</h2>
+
+    <h3>Before: LiteLLM Docker</h3>
+<pre>docker run \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -e OPENAI_API_KEY=$OPENAI_API_KEY \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -p 4000:4000 \
+  docker.litellm.ai/berriai/litellm:main-latest \
+  --config /app/config.yaml</pre>
+
+    <h3>After: AgentGateway Docker</h3>
+<pre>docker run \
+  -v $(pwd)/config.yaml:/config.yaml \
+  -e OPENAI_API_KEY=$OPENAI_API_KEY \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -e ADMIN_ADDR=0.0.0.0:15000 \
+  -p 4000:4000 \
+  -p 127.0.0.1:15000:15000 \
+  cr.agentgateway.dev/agentgateway:latest \
+  -f /config.yaml</pre>
+
+    <div class="callout">
+      <strong>Admin UI included</strong>
+      Port 15000 gives you a built-in web UI for inspecting routes, backends, and live config. Access it at <code>http://localhost:15000/ui</code>.
+    </div>
+  </section>
+
+  <!-- Docker Compose -->
+  <section>
+    <h2>Option 3: Docker Compose</h2>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM docker-compose.yaml</div>
+<pre><span class="key">services</span>:
+  <span class="key">litellm</span>:
+    <span class="key">image</span>: <span class="str">docker.litellm.ai/berriai/litellm:main-stable</span>
+    <span class="key">ports</span>:
+      - <span class="str">"4000:4000"</span>
+    <span class="key">volumes</span>:
+      - <span class="str">./config.yaml:/app/config.yaml</span>
+    <span class="key">environment</span>:
+      - <span class="str">OPENAI_API_KEY=${OPENAI_API_KEY}</span>
+      - <span class="str">ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}</span>
+      - <span class="str">LITELLM_MASTER_KEY=sk-1234</span>
+    <span class="key">command</span>:
+      - <span class="str">"--config"</span>
+      - <span class="str">"/app/config.yaml"</span>
+      - <span class="str">"--port"</span>
+      - <span class="str">"4000"</span>
+    <span class="key">healthcheck</span>:
+      <span class="key">test</span>: [<span class="str">"CMD"</span>, <span class="str">"curl"</span>, <span class="str">"-f"</span>, <span class="str">"http://localhost:4000/health/readiness"</span>]
+      <span class="key">interval</span>: <span class="str">15s</span>
+      <span class="key">timeout</span>: <span class="str">10s</span>
+      <span class="key">retries</span>: <span class="num">5</span>
+      <span class="key">start_period</span>: <span class="str">120s</span></pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway docker-compose.yaml</div>
+<pre><span class="key">services</span>:
+  <span class="key">agentgateway</span>:
+    <span class="key">image</span>: <span class="str">cr.agentgateway.dev/agentgateway:latest</span>
+    <span class="key">ports</span>:
+      - <span class="str">"4000:4000"</span>
+      - <span class="str">"127.0.0.1:15000:15000"</span>
+    <span class="key">volumes</span>:
+      - <span class="str">./config.yaml:/config.yaml</span>
+    <span class="key">environment</span>:
+      - <span class="str">OPENAI_API_KEY=${OPENAI_API_KEY}</span>
+      - <span class="str">ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}</span>
+      - <span class="str">ADMIN_ADDR=0.0.0.0:15000</span>
+    <span class="key">command</span>: [<span class="str">"-f"</span>, <span class="str">"/config.yaml"</span>]
+    <span class="key">healthcheck</span>:
+      <span class="key">test</span>: [<span class="str">"CMD"</span>, <span class="str">"curl"</span>, <span class="str">"-f"</span>, <span class="str">"http://localhost:15000/healthz"</span>]
+      <span class="key">interval</span>: <span class="str">10s</span>
+      <span class="key">timeout</span>: <span class="str">5s</span>
+      <span class="key">retries</span>: <span class="num">3</span>
+      <span class="key">start_period</span>: <span class="str">5s</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start Demo -->
+  <section>
+    <h2>Quick Start: 5-Minute Demo</h2>
+    <p>Go from zero to working LLM + MCP gateway in under 5 minutes.</p>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Install AgentGateway</h4>
+<pre>curl -sL https://agentgateway.dev/install | bash</pre>
+      </div>
+
+      <div class="step">
+        <h4>Set your API keys</h4>
+<pre>export OPENAI_API_KEY="sk-your-key-here"
+export ANTHROPIC_API_KEY="sk-ant-your-key-here"</pre>
+      </div>
+
+      <div class="step">
+        <h4>Create config.yaml</h4>
+<pre>cat &lt;&lt;'EOF' &gt; config.yaml
+<span class="cmt"># LLM Gateway on port 4000</span>
+llm:
+  models:
+    - name: gpt-4o
+      provider: openAI
+      params:
+        model: gpt-4o
+        apiKey: "$OPENAI_API_KEY"
+    - name: claude-sonnet
+      provider: anthropic
+      params:
+        model: claude-sonnet-4-20250514
+        apiKey: "$ANTHROPIC_API_KEY"
+EOF</pre>
+      </div>
+
+      <div class="step">
+        <h4>Run it</h4>
+<pre>agentgateway -f config.yaml</pre>
+      </div>
+
+      <div class="step">
+        <h4>Test it</h4>
+<pre><span class="cmt"># Test OpenAI model</span>
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
+
+<span class="cmt"># Test Anthropic model (same endpoint!)</span>
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet", "messages": [{"role": "user", "content": "Hello!"}]}'
+
+<span class="cmt"># Open Admin UI</span>
+open http://localhost:15000/ui</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Combined LLM + MCP Demo -->
+  <section>
+    <h2>Full Demo: LLM + MCP Gateway</h2>
+    <p>Run both LLM proxy and MCP gateway in a single process.</p>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Create the combined config</h4>
+<pre>cat &lt;&lt;'EOF' &gt; config.yaml
+binds:
+# LLM Gateway
+- port: 4000
+  listeners:
+  - name: llm
+    protocol: HTTP
+    routes:
+    - name: models
+      backends:
+      - ai:
+          groups:
+          - providers:
+            - name: gpt-4o
+              provider:
+                openAI:
+                  model: gpt-4o
+                  apiKey: "$OPENAI_API_KEY"
+            - name: claude-sonnet
+              provider:
+                anthropic:
+                  model: claude-sonnet-4-20250514
+                  apiKey: "$ANTHROPIC_API_KEY"
+
+# MCP Gateway
+- port: 3000
+  listeners:
+  - name: mcp
+    protocol: HTTP
+    routes:
+    - name: tools
+      backends:
+      - mcp:
+          targets:
+          - name: everything
+            stdio:
+              cmd: npx
+              args: ["-y", "@modelcontextprotocol/server-everything"]
+EOF</pre>
+      </div>
+
+      <div class="step">
+        <h4>Run it</h4>
+<pre>agentgateway -f config.yaml</pre>
+        <p>You now have:</p>
+        <ul>
+          <li><strong>LLM Gateway</strong> at <code>http://localhost:4000</code> (OpenAI-compatible API)</li>
+          <li><strong>MCP Gateway</strong> at <code>http://localhost:3000</code> (MCP protocol)</li>
+          <li><strong>Admin UI</strong> at <code>http://localhost:15000/ui</code></li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <h4>Point your Python code to it</h4>
+<pre><span class="cmt"># No code changes needed if you're already using OpenAI SDK</span>
+<span class="kw">import</span> openai
+
+client = openai.OpenAI(
+    api_key=<span class="str">"anything"</span>,  <span class="cmt"># auth handled by gateway</span>
+    base_url=<span class="str">"http://localhost:4000/v1"</span>
+)
+
+response = client.chat.completions.create(
+    model=<span class="str">"gpt-4o"</span>,  <span class="cmt"># or "claude-sonnet"</span>
+    messages=[{<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"Hello!"</span>}]
+)
+
+print(response.choices[<span class="num">0</span>].message.content)</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Hot reload -->
+  <section>
+    <h2>Hot Reload (File Watch)</h2>
+    <p>AgentGateway watches the config file and applies changes without restart. Edit <code>config.yaml</code> while the gateway is running -- changes take effect immediately.</p>
+
+<pre><span class="cmt"># Edit config while running (no restart needed)</span>
+vim config.yaml
+
+<span class="cmt"># AgentGateway detects the change and reloads automatically</span>
+<span class="cmt"># Check the admin UI to verify: http://localhost:15000/ui</span></pre>
+
+    <div class="callout tip">
+      <strong>Zero downtime config changes</strong>
+      LiteLLM requires a process restart for config changes. AgentGateway watches the config file and applies changes live. In Kubernetes, this works with xDS for cluster-wide dynamic config.
+    </div>
+  </section>
+
+  <section>
+    <div class="btn-group">
+      <a href="index.html" class="btn btn-primary">&larr; Back to Home</a>
+      <a href="llm-gateway.html" class="btn btn-outline">LLM Gateway Config</a>
+      <a href="mcp-gateway.html" class="btn btn-outline">MCP Gateway Config</a>
+      <a href="kubernetes.html" class="btn btn-outline">Kubernetes</a>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <p>AgentGateway is a <a href="https://agentgateway.dev">Linux Foundation project</a>. This migration guide is community-maintained.</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Gateway Migration - LiteLLM to AgentGateway</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo"><span>&gt;_</span> Migrate to AgentGateway</div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="llm-gateway.html" class="active">LLM Gateway</a></li>
+      <li><a href="mcp-gateway.html">MCP Gateway</a></li>
+      <li><a href="kubernetes.html">Kubernetes</a></li>
+      <li><a href="binary.html">Binary</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-header">
+    <h1>LLM Gateway Migration</h1>
+    <p>Translate your LiteLLM proxy config to AgentGateway OSS. Same OpenAI-compatible API, different (better) config.</p>
+  </div>
+
+  <!-- Concept Mapping -->
+  <section>
+    <h2>Concept Mapping</h2>
+    <p>Here's how LiteLLM concepts translate to AgentGateway:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>LiteLLM</th>
+          <th>AgentGateway</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>model_list</code></td>
+          <td><code>llm.models</code></td>
+          <td>Top-level model definitions</td>
+        </tr>
+        <tr>
+          <td><code>model_name</code></td>
+          <td><code>name</code></td>
+          <td>The name clients send in requests</td>
+        </tr>
+        <tr>
+          <td><code>litellm_params.model</code></td>
+          <td><code>params.model</code></td>
+          <td>No provider prefix needed in AgentGateway</td>
+        </tr>
+        <tr>
+          <td><code>litellm_params.api_key</code></td>
+          <td><code>params.apiKey</code></td>
+          <td><code>os.environ/VAR</code> becomes <code>"$VAR"</code></td>
+        </tr>
+        <tr>
+          <td><code>fallbacks</code></td>
+          <td><code>groups</code> (in advanced config)</td>
+          <td>Groups tried in order; providers in a group are load-balanced</td>
+        </tr>
+        <tr>
+          <td><code>routing_strategy</code></td>
+          <td>Multiple providers in a <code>group</code></td>
+          <td>Load balancing across providers within the same group</td>
+        </tr>
+        <tr>
+          <td><code>master_key</code></td>
+          <td><code>jwtAuth</code> / policy</td>
+          <td>JWT-based auth replaces simple API keys</td>
+        </tr>
+        <tr>
+          <td><code>num_retries</code></td>
+          <td><code>health.eviction</code></td>
+          <td>Health-based eviction replaces retry counting</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Side-by-side: Basic -->
+  <section>
+    <h2>Basic Config: Side by Side</h2>
+    <p>A typical LiteLLM setup with OpenAI and Anthropic models, and its AgentGateway equivalent.</p>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM &mdash; config.yaml</div>
+<pre><span class="cmt"># LiteLLM Proxy Configuration</span>
+
+<span class="key">model_list</span>:
+  - <span class="key">model_name</span>: <span class="str">gpt-4o</span>
+    <span class="key">litellm_params</span>:
+      <span class="key">model</span>: <span class="str">openai/gpt-4o</span>
+      <span class="key">api_key</span>: <span class="str">os.environ/OPENAI_API_KEY</span>
+
+  - <span class="key">model_name</span>: <span class="str">gpt-4o-mini</span>
+    <span class="key">litellm_params</span>:
+      <span class="key">model</span>: <span class="str">openai/gpt-4o-mini</span>
+      <span class="key">api_key</span>: <span class="str">os.environ/OPENAI_API_KEY</span>
+
+  - <span class="key">model_name</span>: <span class="str">claude-sonnet</span>
+    <span class="key">litellm_params</span>:
+      <span class="key">model</span>: <span class="str">anthropic/claude-sonnet-4-20250514</span>
+      <span class="key">api_key</span>: <span class="str">os.environ/ANTHROPIC_API_KEY</span>
+
+  - <span class="key">model_name</span>: <span class="str">claude-haiku</span>
+    <span class="key">litellm_params</span>:
+      <span class="key">model</span>: <span class="str">anthropic/claude-haiku-4-5-20251001</span>
+      <span class="key">api_key</span>: <span class="str">os.environ/ANTHROPIC_API_KEY</span>
+
+<span class="key">general_settings</span>:
+  <span class="key">master_key</span>: <span class="str">sk-1234</span>
+
+<span class="key">litellm_settings</span>:
+  <span class="key">num_retries</span>: <span class="num">3</span>
+  <span class="key">request_timeout</span>: <span class="num">30</span>
+  <span class="key">fallbacks</span>:
+    - <span class="key">claude-sonnet</span>: [<span class="str">gpt-4o</span>]
+  <span class="key">drop_params</span>: <span class="val">true</span>
+
+<span class="key">router_settings</span>:
+  <span class="key">routing_strategy</span>: <span class="str">simple-shuffle</span></pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway &mdash; config.yaml</div>
+<pre><span class="cmt"># AgentGateway LLM Gateway</span>
+
+<span class="key">llm</span>:
+  <span class="key">models</span>:
+    - <span class="key">name</span>: <span class="str">gpt-4o</span>
+      <span class="key">provider</span>: <span class="val">openAI</span>
+      <span class="key">params</span>:
+        <span class="key">model</span>: <span class="str">gpt-4o</span>
+        <span class="key">apiKey</span>: <span class="str">"$OPENAI_API_KEY"</span>
+
+    - <span class="key">name</span>: <span class="str">gpt-4o-mini</span>
+      <span class="key">provider</span>: <span class="val">openAI</span>
+      <span class="key">params</span>:
+        <span class="key">model</span>: <span class="str">gpt-4o-mini</span>
+        <span class="key">apiKey</span>: <span class="str">"$OPENAI_API_KEY"</span>
+
+    - <span class="key">name</span>: <span class="str">claude-sonnet</span>
+      <span class="key">provider</span>: <span class="val">anthropic</span>
+      <span class="key">params</span>:
+        <span class="key">model</span>: <span class="str">claude-sonnet-4-20250514</span>
+        <span class="key">apiKey</span>: <span class="str">"$ANTHROPIC_API_KEY"</span>
+
+    - <span class="key">name</span>: <span class="str">claude-haiku</span>
+      <span class="key">provider</span>: <span class="val">anthropic</span>
+      <span class="key">params</span>:
+        <span class="key">model</span>: <span class="str">claude-haiku-4-5-20251001</span>
+        <span class="key">apiKey</span>: <span class="str">"$ANTHROPIC_API_KEY"</span>
+
+
+
+<span class="cmt"># No master_key needed - use JWT auth
+# No retry config needed - use health eviction
+# No routing_strategy needed - use groups
+# Env vars use "$VAR" syntax</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Key Differences -->
+  <section>
+    <h2>Key Differences to Note</h2>
+
+    <h3>1. No Provider Prefix in Model Name</h3>
+    <p>LiteLLM uses <code>openai/gpt-4o</code> format. AgentGateway uses a separate <code>provider</code> field and the raw model name.</p>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM</div>
+<pre><span class="key">model</span>: <span class="str">openai/gpt-4o</span>        <span class="cmt"># provider/model</span>
+<span class="key">model</span>: <span class="str">anthropic/claude-sonnet-4-20250514</span></pre>
+      </div>
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway</div>
+<pre><span class="key">provider</span>: <span class="val">openAI</span>             <span class="cmt"># separate field</span>
+<span class="key">params</span>:
+  <span class="key">model</span>: <span class="str">gpt-4o</span>             <span class="cmt"># just the model</span></pre>
+      </div>
+    </div>
+
+    <h3>2. Environment Variable Syntax</h3>
+    <p>Different syntax for referencing environment variables.</p>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM</div>
+<pre><span class="key">api_key</span>: <span class="str">os.environ/OPENAI_API_KEY</span></pre>
+      </div>
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway</div>
+<pre><span class="key">apiKey</span>: <span class="str">"$OPENAI_API_KEY"</span></pre>
+      </div>
+    </div>
+
+    <h3>3. Fallback / Failover</h3>
+    <p>LiteLLM uses a flat <code>fallbacks</code> list. AgentGateway uses ordered <code>groups</code> for failover with health-based eviction.</p>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM</div>
+<pre><span class="key">litellm_settings</span>:
+  <span class="key">fallbacks</span>:
+    - <span class="key">claude-sonnet</span>: [<span class="str">gpt-4o</span>]
+    - <span class="key">gpt-4o</span>: [<span class="str">claude-sonnet</span>]
+  <span class="key">num_retries</span>: <span class="num">3</span></pre>
+      </div>
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway</div>
+<pre><span class="key">backends</span>:
+- <span class="key">ai</span>:
+    <span class="key">groups</span>:
+    <span class="cmt"># Primary: Anthropic</span>
+    - <span class="key">providers</span>:
+      - <span class="key">name</span>: <span class="str">claude-sonnet</span>
+        <span class="key">provider</span>:
+          <span class="key">anthropic</span>:
+            <span class="key">model</span>: <span class="str">claude-sonnet-4-20250514</span>
+        <span class="key">health</span>:
+          <span class="key">unhealthyExpression</span>: <span class="str">"response.code >= 500 || response.code == 429"</span>
+          <span class="key">eviction</span>:
+            <span class="key">duration</span>: <span class="str">30s</span>
+    <span class="cmt"># Fallback: OpenAI</span>
+    - <span class="key">providers</span>:
+      - <span class="key">name</span>: <span class="str">gpt-4o</span>
+        <span class="key">provider</span>:
+          <span class="key">openAI</span>:
+            <span class="key">model</span>: <span class="str">gpt-4o</span></pre>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <strong>Health-based eviction is smarter than retries</strong>
+      AgentGateway temporarily evicts unhealthy providers (e.g., rate limited or 500 errors) for a configurable duration, then re-adds them. No wasted retry cycles.
+    </div>
+  </section>
+
+  <!-- Advanced: Prompt Enrichment -->
+  <section>
+    <h2>Bonus: Features You Get for Free</h2>
+
+    <h3>Prompt Enrichment</h3>
+    <p>Automatically prepend or append system prompts to every request. No client changes needed.</p>
+<pre><span class="key">policies</span>:
+  <span class="key">ai</span>:
+    <span class="key">promptEnrichment</span>:
+      <span class="key">prepend</span>:
+      - <span class="key">role</span>: <span class="str">system</span>
+        <span class="key">content</span>: <span class="str">"You are a helpful assistant. Always respond in English."</span></pre>
+
+    <h3>Prompt Guard / PII Detection</h3>
+    <p>Block or redact sensitive data before it hits the LLM provider.</p>
+<pre><span class="key">policies</span>:
+  <span class="key">ai</span>:
+    <span class="key">promptGuard</span>:
+      <span class="key">regex</span>:
+        <span class="key">matches</span>:
+        - <span class="key">pattern</span>: <span class="str">"\\b\\d{3}-\\d{2}-\\d{4}\\b"</span>    <span class="cmt"># SSN pattern</span>
+          <span class="key">action</span>: <span class="val">REJECT</span></pre>
+
+    <h3>Built-in Admin UI</h3>
+    <p>AgentGateway ships with a web UI at <code>http://localhost:15000/ui</code> for inspecting config, routes, and backends in real time. No separate dashboard needed.</p>
+  </section>
+
+  <!-- Step-by-step -->
+  <section>
+    <h2>Migration Steps</h2>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Export your LiteLLM config</h4>
+        <p>Copy your current <code>config.yaml</code> and note all models, API keys, and settings.</p>
+<pre>cat /path/to/litellm/config.yaml</pre>
+      </div>
+
+      <div class="step">
+        <h4>Translate models to AgentGateway format</h4>
+        <p>For each entry in <code>model_list</code>, create an entry under <code>llm.models</code>. Remove the provider prefix from the model name, use the <code>provider</code> field, and switch env var syntax.</p>
+      </div>
+
+      <div class="step">
+        <h4>Translate fallbacks to groups (if using advanced config)</h4>
+        <p>If you need failover, switch from the simple <code>llm.models</code> shorthand to the full <code>binds/listeners/routes</code> config with <code>groups</code>.</p>
+      </div>
+
+      <div class="step">
+        <h4>Set up auth (if needed)</h4>
+        <p>Replace <code>master_key</code> with JWT auth or remove auth entirely for dev. See the <a href="https://agentgateway.dev/docs/">AgentGateway docs</a> for JWT setup.</p>
+      </div>
+
+      <div class="step">
+        <h4>Test with the same curl command</h4>
+        <p>The API is identical. Just change the port if needed.</p>
+<pre><span class="cmt"># Works with both LiteLLM and AgentGateway!</span>
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="btn-group">
+      <a href="mcp-gateway.html" class="btn btn-primary">Next: MCP Gateway Migration &rarr;</a>
+      <a href="binary.html" class="btn btn-outline">Deploy as Binary</a>
+      <a href="kubernetes.html" class="btn btn-outline">Deploy on Kubernetes</a>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <p>AgentGateway is a <a href="https://agentgateway.dev">Linux Foundation project</a>. This migration guide is community-maintained.</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Gateway Migration - LiteLLM to AgentGateway</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo"><span>&gt;_</span> Migrate to AgentGateway</div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="llm-gateway.html">LLM Gateway</a></li>
+      <li><a href="mcp-gateway.html" class="active">MCP Gateway</a></li>
+      <li><a href="kubernetes.html">Kubernetes</a></li>
+      <li><a href="binary.html">Binary</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-header">
+    <h1>MCP Gateway Migration</h1>
+    <p>Migrate your MCP server configuration from LiteLLM to AgentGateway's native, protocol-aware MCP gateway.</p>
+  </div>
+
+  <!-- Why AgentGateway for MCP -->
+  <section>
+    <h2>Why AgentGateway for MCP?</h2>
+    <p>LiteLLM added MCP support in v1.80.18. AgentGateway was built MCP-native from day one, with capabilities that go beyond basic proxying.</p>
+
+    <div class="cards">
+      <div class="card">
+        <span class="icon">&#128268;</span>
+        <h3>Fan-out Aggregation</h3>
+        <p>A single <code>tools/list</code> call fans out to all backend MCP servers and aggregates results. Clients see one unified tool catalog.</p>
+      </div>
+      <div class="card">
+        <span class="icon">&#128272;</span>
+        <h3>Per-Tool Authorization</h3>
+        <p>CEL-based rules control who can call which tools. <code>'jwt.sub == "admin" && mcp.tool.name == "deploy"'</code></p>
+      </div>
+      <div class="card">
+        <span class="icon">&#128259;</span>
+        <h3>OpenAPI to MCP</h3>
+        <p>Automatically convert any OpenAPI spec into MCP tools. Legacy APIs become agent-callable without writing adapter code.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Concept Mapping -->
+  <section>
+    <h2>Concept Mapping</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>LiteLLM</th>
+          <th>AgentGateway</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>mcp_servers</code></td>
+          <td><code>backends[].mcp.targets</code></td>
+          <td>MCP servers defined as backend targets</td>
+        </tr>
+        <tr>
+          <td><code>transport: "stdio"</code></td>
+          <td><code>stdio:</code> block</td>
+          <td>Same concept, different syntax</td>
+        </tr>
+        <tr>
+          <td><code>url: "https://..."</code></td>
+          <td><code>mcp: { host: "https://..." }</code></td>
+          <td>Remote MCP servers</td>
+        </tr>
+        <tr>
+          <td><code>command</code> + <code>args</code></td>
+          <td><code>cmd</code> + <code>args</code></td>
+          <td>Nearly identical</td>
+        </tr>
+        <tr>
+          <td><code>env</code></td>
+          <td><code>env</code></td>
+          <td>Same</td>
+        </tr>
+        <tr>
+          <td><code>auth_type</code></td>
+          <td><code>policies.backendAuth</code></td>
+          <td>Auth handled as a policy layer</td>
+        </tr>
+        <tr>
+          <td>N/A</td>
+          <td><code>openapi:</code> block</td>
+          <td>AgentGateway can expose OpenAPI specs as MCP tools</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Side-by-side: MCP Everything Server -->
+  <section>
+    <h2>Example: Everything MCP Server</h2>
+    <p>The popular <code>@modelcontextprotocol/server-everything</code> test server, configured in both systems.</p>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM &mdash; config.yaml</div>
+<pre><span class="key">model_list</span>:
+  - <span class="key">model_name</span>: <span class="str">gpt-4o</span>
+    <span class="key">litellm_params</span>:
+      <span class="key">model</span>: <span class="str">openai/gpt-4o</span>
+      <span class="key">api_key</span>: <span class="str">os.environ/OPENAI_API_KEY</span>
+
+<span class="key">mcp_servers</span>:
+  <span class="key">everything_mcp</span>:
+    <span class="key">transport</span>: <span class="str">"stdio"</span>
+    <span class="key">command</span>: <span class="str">"npx"</span>
+    <span class="key">args</span>:
+      - <span class="str">"-y"</span>
+      - <span class="str">"@modelcontextprotocol/server-everything"</span>
+
+<span class="key">general_settings</span>:
+  <span class="key">master_key</span>: <span class="str">sk-1234</span>
+  <span class="key">store_model_in_db</span>: <span class="val">true</span></pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway &mdash; config.yaml</div>
+<pre><span class="key">binds</span>:
+- <span class="key">port</span>: <span class="num">3000</span>
+  <span class="key">listeners</span>:
+  - <span class="key">name</span>: <span class="str">mcp-gateway</span>
+    <span class="key">protocol</span>: <span class="val">HTTP</span>
+    <span class="key">routes</span>:
+    - <span class="key">name</span>: <span class="str">mcp-tools</span>
+      <span class="key">backends</span>:
+      - <span class="key">mcp</span>:
+          <span class="key">targets</span>:
+          - <span class="key">name</span>: <span class="str">everything</span>
+            <span class="key">stdio</span>:
+              <span class="key">cmd</span>: <span class="str">npx</span>
+              <span class="key">args</span>:
+                - <span class="str">"-y"</span>
+                - <span class="str">"@modelcontextprotocol/server-everything"</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Multi-server setup -->
+  <section>
+    <h2>Example: Multiple MCP Servers</h2>
+    <p>A production setup with multiple MCP backends (stdio + remote), auth, and access control.</p>
+
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM &mdash; config.yaml</div>
+<pre><span class="key">mcp_servers</span>:
+  <span class="cmt"># Local stdio server</span>
+  <span class="key">everything_mcp</span>:
+    <span class="key">transport</span>: <span class="str">"stdio"</span>
+    <span class="key">command</span>: <span class="str">"npx"</span>
+    <span class="key">args</span>: [<span class="str">"-y"</span>, <span class="str">"@modelcontextprotocol/server-everything"</span>]
+
+  <span class="cmt"># GitHub MCP server</span>
+  <span class="key">github_mcp</span>:
+    <span class="key">transport</span>: <span class="str">"stdio"</span>
+    <span class="key">command</span>: <span class="str">"npx"</span>
+    <span class="key">args</span>: [<span class="str">"-y"</span>, <span class="str">"@modelcontextprotocol/server-github"</span>]
+    <span class="key">env</span>:
+      <span class="key">GITHUB_TOKEN</span>: <span class="str">os.environ/GITHUB_TOKEN</span>
+
+  <span class="cmt"># Remote MCP server</span>
+  <span class="key">remote_mcp</span>:
+    <span class="key">url</span>: <span class="str">"https://my-mcp-server.example.com/mcp"</span>
+    <span class="key">static_headers</span>:
+      <span class="key">X-API-Key</span>: <span class="str">"my-secret-key"</span></pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway &mdash; config.yaml</div>
+<pre><span class="key">binds</span>:
+- <span class="key">port</span>: <span class="num">3000</span>
+  <span class="key">listeners</span>:
+  - <span class="key">name</span>: <span class="str">mcp-gateway</span>
+    <span class="key">protocol</span>: <span class="val">HTTP</span>
+    <span class="key">routes</span>:
+    - <span class="key">name</span>: <span class="str">all-tools</span>
+      <span class="key">backends</span>:
+      - <span class="key">mcp</span>:
+          <span class="key">targets</span>:
+          <span class="cmt"># Local stdio server</span>
+          - <span class="key">name</span>: <span class="str">everything</span>
+            <span class="key">stdio</span>:
+              <span class="key">cmd</span>: <span class="str">npx</span>
+              <span class="key">args</span>: [<span class="str">"-y"</span>, <span class="str">"@modelcontextprotocol/server-everything"</span>]
+
+          <span class="cmt"># GitHub MCP server</span>
+          - <span class="key">name</span>: <span class="str">github</span>
+            <span class="key">stdio</span>:
+              <span class="key">cmd</span>: <span class="str">npx</span>
+              <span class="key">args</span>: [<span class="str">"-y"</span>, <span class="str">"@modelcontextprotocol/server-github"</span>]
+              <span class="key">env</span>:
+                <span class="key">GITHUB_TOKEN</span>: <span class="str">"$GITHUB_TOKEN"</span>
+
+          <span class="cmt"># Remote MCP server</span>
+          - <span class="key">name</span>: <span class="str">remote</span>
+            <span class="key">mcp</span>:
+              <span class="key">host</span>: <span class="str">https://my-mcp-server.example.com/mcp</span>
+
+      <span class="key">policies</span>:
+        <span class="key">backendAuth</span>:
+          <span class="key">passthrough</span>: {}
+        <span class="key">mcpAuthorization</span>:
+          <span class="key">rules</span>:
+          - <span class="key">cel</span>: <span class="str">'jwt.sub != ""'</span></pre>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <strong>Unified tool catalog</strong>
+      When an MCP client calls <code>tools/list</code> on AgentGateway, it fans out to ALL backend servers and returns a merged list. Clients see one gateway, not three separate servers.
+    </div>
+  </section>
+
+  <!-- OpenAPI to MCP -->
+  <section>
+    <h2>Bonus: OpenAPI to MCP (AgentGateway Only)</h2>
+    <p>Turn any REST API with an OpenAPI spec into MCP tools automatically. No adapter code needed.</p>
+
+<pre><span class="key">backends</span>:
+- <span class="key">mcp</span>:
+    <span class="key">targets</span>:
+    <span class="cmt"># Your existing REST API becomes MCP-callable</span>
+    - <span class="key">name</span>: <span class="str">petstore</span>
+      <span class="key">openapi</span>:
+        <span class="key">schema</span>:
+          <span class="key">file</span>: <span class="str">./petstore-openapi.json</span>
+        <span class="key">host</span>: <span class="str">petstore.example.com:443</span></pre>
+
+    <div class="callout">
+      <strong>Legacy API migration</strong>
+      If your agents currently call REST APIs directly, you can wrap them as MCP tools through AgentGateway without touching the API itself. This enables tool discovery, authorization, and observability.
+    </div>
+  </section>
+
+  <!-- Combined LLM + MCP -->
+  <section>
+    <h2>Full Setup: LLM + MCP in One Config</h2>
+    <p>AgentGateway can run both LLM proxy and MCP gateway on different ports in a single process.</p>
+
+<pre><span class="cmt"># Combined LLM + MCP Gateway</span>
+
+<span class="key">binds</span>:
+<span class="cmt"># Port 4000: LLM Gateway (OpenAI-compatible API)</span>
+- <span class="key">port</span>: <span class="num">4000</span>
+  <span class="key">listeners</span>:
+  - <span class="key">name</span>: <span class="str">llm</span>
+    <span class="key">protocol</span>: <span class="val">HTTP</span>
+    <span class="key">routes</span>:
+    - <span class="key">name</span>: <span class="str">models</span>
+      <span class="key">backends</span>:
+      - <span class="key">ai</span>:
+          <span class="key">groups</span>:
+          - <span class="key">providers</span>:
+            - <span class="key">name</span>: <span class="str">gpt-4o</span>
+              <span class="key">provider</span>:
+                <span class="key">openAI</span>:
+                  <span class="key">model</span>: <span class="str">gpt-4o</span>
+                  <span class="key">apiKey</span>: <span class="str">"$OPENAI_API_KEY"</span>
+            - <span class="key">name</span>: <span class="str">claude-sonnet</span>
+              <span class="key">provider</span>:
+                <span class="key">anthropic</span>:
+                  <span class="key">model</span>: <span class="str">claude-sonnet-4-20250514</span>
+                  <span class="key">apiKey</span>: <span class="str">"$ANTHROPIC_API_KEY"</span>
+
+<span class="cmt"># Port 3000: MCP Gateway</span>
+- <span class="key">port</span>: <span class="num">3000</span>
+  <span class="key">listeners</span>:
+  - <span class="key">name</span>: <span class="str">mcp</span>
+    <span class="key">protocol</span>: <span class="val">HTTP</span>
+    <span class="key">routes</span>:
+    - <span class="key">name</span>: <span class="str">tools</span>
+      <span class="key">backends</span>:
+      - <span class="key">mcp</span>:
+          <span class="key">targets</span>:
+          - <span class="key">name</span>: <span class="str">everything</span>
+            <span class="key">stdio</span>:
+              <span class="key">cmd</span>: <span class="str">npx</span>
+              <span class="key">args</span>: [<span class="str">"-y"</span>, <span class="str">"@modelcontextprotocol/server-everything"</span>]
+
+<span class="key">frontendPolicies</span>:
+  <span class="key">tracing</span>:
+    <span class="key">host</span>: <span class="str">localhost:4317</span>
+  <span class="key">accessLog</span>:
+    <span class="key">add</span>:
+      <span class="key">backend</span>: <span class="str">backend</span></pre>
+  </section>
+
+  <!-- Migration Steps -->
+  <section>
+    <h2>Migration Steps</h2>
+
+    <div class="steps">
+      <div class="step">
+        <h4>List your MCP servers</h4>
+        <p>Identify all entries in your <code>mcp_servers</code> block. Note which are stdio vs remote, and what auth they use.</p>
+      </div>
+
+      <div class="step">
+        <h4>Create MCP targets</h4>
+        <p>For each LiteLLM MCP server, create a target under <code>backends[].mcp.targets</code>:</p>
+        <ul>
+          <li><code>transport: "stdio"</code> + <code>command</code>/<code>args</code> &rarr; <code>stdio: { cmd, args }</code></li>
+          <li><code>url: "https://..."</code> &rarr; <code>mcp: { host: "https://..." }</code></li>
+          <li><code>env</code> variables: <code>os.environ/VAR</code> &rarr; <code>"$VAR"</code></li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <h4>Configure auth policies</h4>
+        <p>Replace <code>static_headers</code> with <code>backendAuth</code> policies. Add <code>jwtAuth</code> and <code>mcpAuthorization</code> for client-facing auth.</p>
+      </div>
+
+      <div class="step">
+        <h4>Test with MCP Inspector or Claude Desktop</h4>
+        <p>Point your MCP client to <code>http://localhost:3000</code> and verify <code>tools/list</code> returns all expected tools.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="btn-group">
+      <a href="kubernetes.html" class="btn btn-primary">Next: Kubernetes Deployment &rarr;</a>
+      <a href="llm-gateway.html" class="btn btn-outline">&larr; LLM Gateway</a>
+      <a href="binary.html" class="btn btn-outline">Binary Deployment</a>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <p>AgentGateway is a <a href="https://agentgateway.dev">Linux Foundation project</a>. This migration guide is community-maintained.</p>
+</footer>
+
+</body>
+</html>

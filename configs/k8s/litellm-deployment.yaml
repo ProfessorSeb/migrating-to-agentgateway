@@ -1,0 +1,100 @@
+# LiteLLM Kubernetes Deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: default
+data:
+  config.yaml: |
+    model_list:
+      - model_name: gpt-4o
+        litellm_params:
+          model: openai/gpt-4o
+          api_key: os.environ/OPENAI_API_KEY
+      - model_name: claude-sonnet
+        litellm_params:
+          model: anthropic/claude-sonnet-4-20250514
+          api_key: os.environ/ANTHROPIC_API_KEY
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+    litellm_settings:
+      num_retries: 3
+      fallbacks:
+        - claude-sonnet: [gpt-4o]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: litellm-secrets
+  namespace: default
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "sk-your-openai-key"
+  ANTHROPIC_API_KEY: "sk-ant-your-anthropic-key"
+  LITELLM_MASTER_KEY: "sk-1234"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: litellm
+  template:
+    metadata:
+      labels:
+        app: litellm
+    spec:
+      containers:
+      - name: litellm
+        image: docker.litellm.ai/berriai/litellm:main-stable
+        args: ["--config", "/app/config.yaml", "--port", "4000"]
+        ports:
+        - containerPort: 4000
+        envFrom:
+        - secretRef:
+            name: litellm-secrets
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        livenessProbe:
+          httpGet:
+            path: /health/liveliness
+            port: 4000
+          initialDelaySeconds: 120
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health/readiness
+            port: 4000
+          initialDelaySeconds: 120
+          periodSeconds: 15
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+      volumes:
+      - name: config
+        configMap:
+          name: litellm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: default
+spec:
+  selector:
+    app: litellm
+  ports:
+  - port: 4000
+    targetPort: 4000
+  type: ClusterIP

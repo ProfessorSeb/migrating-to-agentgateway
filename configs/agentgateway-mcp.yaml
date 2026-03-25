@@ -1,0 +1,43 @@
+# AgentGateway OSS - MCP Gateway Configuration
+# Equivalent to the LiteLLM MCP setup
+
+binds:
+- port: 3000
+  listeners:
+  - name: mcp-gateway
+    protocol: HTTP
+    routes:
+    - name: mcp-tools
+      backends:
+      - mcp:
+          targets:
+          # Stdio-based MCP server (everything server)
+          - name: everything
+            stdio:
+              cmd: npx
+              args: ["-y", "@modelcontextprotocol/server-everything"]
+
+          # Remote MCP server
+          - name: remote
+            mcp:
+              host: https://my-mcp-server.example.com/mcp
+
+          # GitHub MCP server via stdio
+          - name: github
+            stdio:
+              cmd: npx
+              args: ["-y", "@modelcontextprotocol/server-github"]
+              env:
+                GITHUB_TOKEN: "$GITHUB_TOKEN"
+
+      policies:
+        cors: {}
+        jwtAuth:
+          providers:
+          - issuer: https://auth.example.com
+            audiences: ["my-app"]
+            jwks:
+              url: https://auth.example.com/.well-known/jwks.json
+        mcpAuthorization:
+          rules:
+          - cel: 'jwt.sub != ""'

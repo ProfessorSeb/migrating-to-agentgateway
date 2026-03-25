@@ -1,0 +1,102 @@
+# AgentGateway OSS Kubernetes Deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentgateway-config
+  namespace: default
+data:
+  config.yaml: |
+    llm:
+      models:
+        - name: gpt-4o
+          provider: openAI
+          params:
+            model: gpt-4o
+            apiKey: "$OPENAI_API_KEY"
+        - name: claude-sonnet
+          provider: anthropic
+          params:
+            model: claude-sonnet-4-20250514
+            apiKey: "$ANTHROPIC_API_KEY"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentgateway-secrets
+  namespace: default
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "sk-your-openai-key"
+  ANTHROPIC_API_KEY: "sk-ant-your-anthropic-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agentgateway
+  template:
+    metadata:
+      labels:
+        app: agentgateway
+    spec:
+      containers:
+      - name: agentgateway
+        image: cr.agentgateway.dev/agentgateway:latest
+        args: ["-f", "/config/config.yaml"]
+        ports:
+        - containerPort: 4000
+          name: llm
+        - containerPort: 15000
+          name: admin
+        envFrom:
+        - secretRef:
+            name: agentgateway-secrets
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 15000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 15000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "250m"
+            memory: 128Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+      volumes:
+      - name: config
+        configMap:
+          name: agentgateway-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway
+  namespace: default
+spec:
+  selector:
+    app: agentgateway
+  ports:
+  - name: llm
+    port: 4000
+    targetPort: 4000
+  - name: admin
+    port: 15000
+    targetPort: 15000
+  type: ClusterIP

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kubernetes Deployment - LiteLLM to AgentGateway</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo"><span>&gt;_</span> Migrate to AgentGateway</div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="llm-gateway.html">LLM Gateway</a></li>
+      <li><a href="mcp-gateway.html">MCP Gateway</a></li>
+      <li><a href="kubernetes.html" class="active">Kubernetes</a></li>
+      <li><a href="binary.html">Binary</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-header">
+    <h1>Kubernetes Deployment</h1>
+    <p>Replace your LiteLLM Deployment + ConfigMap with AgentGateway. Two paths: raw manifests or Helm + Gateway API.</p>
+  </div>
+
+  <!-- Resource Comparison -->
+  <section>
+    <h2>Resource Comparison</h2>
+    <p>AgentGateway is dramatically lighter than LiteLLM in Kubernetes.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Resource</th>
+          <th>LiteLLM</th>
+          <th>AgentGateway</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Container image</td><td><code>docker.litellm.ai/berriai/litellm:main-stable</code></td><td><code>cr.agentgateway.dev/agentgateway:latest</code></td></tr>
+        <tr><td>CPU request</td><td>2 cores</td><td>250m</td></tr>
+        <tr><td>Memory request</td><td>4 Gi</td><td>128 Mi</td></tr>
+        <tr><td>CPU limit</td><td>4 cores</td><td>1 core</td></tr>
+        <tr><td>Memory limit</td><td>8 Gi</td><td>512 Mi</td></tr>
+        <tr><td>Readiness probe delay</td><td>120s</td><td>5s</td></tr>
+        <tr><td>Runtime</td><td>Python</td><td>Rust (static binary)</td></tr>
+        <tr><td>Image size</td><td>~1.5 GB</td><td>~50 MB</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout tip">
+      <strong>16x less memory, 24x faster startup</strong>
+      These aren't theoretical numbers. Rust binaries don't need a Python runtime, package manager, or virtual environment in the container.
+    </div>
+  </section>
+
+  <!-- Side-by-side: Raw Manifests -->
+  <section>
+    <h2>Option 1: Raw Kubernetes Manifests</h2>
+    <p>Direct translation of your existing LiteLLM manifests to AgentGateway.</p>
+
+    <h3>ConfigMap</h3>
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM ConfigMap</div>
+<pre><span class="key">apiVersion</span>: <span class="str">v1</span>
+<span class="key">kind</span>: <span class="str">ConfigMap</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">litellm-config</span>
+<span class="key">data</span>:
+  <span class="key">config.yaml</span>: |
+    <span class="key">model_list</span>:
+      - <span class="key">model_name</span>: <span class="str">gpt-4o</span>
+        <span class="key">litellm_params</span>:
+          <span class="key">model</span>: <span class="str">openai/gpt-4o</span>
+          <span class="key">api_key</span>: <span class="str">os.environ/OPENAI_API_KEY</span>
+      - <span class="key">model_name</span>: <span class="str">claude-sonnet</span>
+        <span class="key">litellm_params</span>:
+          <span class="key">model</span>: <span class="str">anthropic/claude-sonnet-4-20250514</span>
+          <span class="key">api_key</span>: <span class="str">os.environ/ANTHROPIC_API_KEY</span>
+    <span class="key">general_settings</span>:
+      <span class="key">master_key</span>: <span class="str">os.environ/LITELLM_MASTER_KEY</span>
+    <span class="key">litellm_settings</span>:
+      <span class="key">num_retries</span>: <span class="num">3</span>
+      <span class="key">fallbacks</span>:
+        - <span class="key">claude-sonnet</span>: [<span class="str">gpt-4o</span>]</pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway ConfigMap</div>
+<pre><span class="key">apiVersion</span>: <span class="str">v1</span>
+<span class="key">kind</span>: <span class="str">ConfigMap</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">agentgateway-config</span>
+<span class="key">data</span>:
+  <span class="key">config.yaml</span>: |
+    <span class="key">llm</span>:
+      <span class="key">models</span>:
+        - <span class="key">name</span>: <span class="str">gpt-4o</span>
+          <span class="key">provider</span>: <span class="val">openAI</span>
+          <span class="key">params</span>:
+            <span class="key">model</span>: <span class="str">gpt-4o</span>
+            <span class="key">apiKey</span>: <span class="str">"$OPENAI_API_KEY"</span>
+        - <span class="key">name</span>: <span class="str">claude-sonnet</span>
+          <span class="key">provider</span>: <span class="val">anthropic</span>
+          <span class="key">params</span>:
+            <span class="key">model</span>: <span class="str">claude-sonnet-4-20250514</span>
+            <span class="key">apiKey</span>: <span class="str">"$ANTHROPIC_API_KEY"</span></pre>
+      </div>
+    </div>
+
+    <h3>Secret</h3>
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM Secret</div>
+<pre><span class="key">apiVersion</span>: <span class="str">v1</span>
+<span class="key">kind</span>: <span class="str">Secret</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">litellm-secrets</span>
+<span class="key">type</span>: <span class="str">Opaque</span>
+<span class="key">stringData</span>:
+  <span class="key">OPENAI_API_KEY</span>: <span class="str">"sk-..."</span>
+  <span class="key">ANTHROPIC_API_KEY</span>: <span class="str">"sk-ant-..."</span>
+  <span class="key">LITELLM_MASTER_KEY</span>: <span class="str">"sk-1234"</span></pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway Secret</div>
+<pre><span class="key">apiVersion</span>: <span class="str">v1</span>
+<span class="key">kind</span>: <span class="str">Secret</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">agentgateway-secrets</span>
+<span class="key">type</span>: <span class="str">Opaque</span>
+<span class="key">stringData</span>:
+  <span class="key">OPENAI_API_KEY</span>: <span class="str">"sk-..."</span>
+  <span class="key">ANTHROPIC_API_KEY</span>: <span class="str">"sk-ant-..."</span>
+  <span class="cmt"># No master key needed</span></pre>
+      </div>
+    </div>
+
+    <h3>Deployment</h3>
+    <div class="comparison">
+      <div class="panel from">
+        <div class="panel-header">&#10005; LiteLLM Deployment</div>
+<pre><span class="key">apiVersion</span>: <span class="str">apps/v1</span>
+<span class="key">kind</span>: <span class="str">Deployment</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">litellm</span>
+<span class="key">spec</span>:
+  <span class="key">replicas</span>: <span class="num">2</span>
+  <span class="key">selector</span>:
+    <span class="key">matchLabels</span>:
+      <span class="key">app</span>: <span class="str">litellm</span>
+  <span class="key">template</span>:
+    <span class="key">spec</span>:
+      <span class="key">containers</span>:
+      - <span class="key">name</span>: <span class="str">litellm</span>
+        <span class="key">image</span>: <span class="str">docker.litellm.ai/berriai/litellm:main-stable</span>
+        <span class="key">args</span>: [<span class="str">"--config"</span>, <span class="str">"/app/config.yaml"</span>, <span class="str">"--port"</span>, <span class="str">"4000"</span>]
+        <span class="key">ports</span>:
+        - <span class="key">containerPort</span>: <span class="num">4000</span>
+        <span class="key">envFrom</span>:
+        - <span class="key">secretRef</span>:
+            <span class="key">name</span>: <span class="str">litellm-secrets</span>
+        <span class="key">volumeMounts</span>:
+        - <span class="key">name</span>: <span class="str">config</span>
+          <span class="key">mountPath</span>: <span class="str">/app/config.yaml</span>
+          <span class="key">subPath</span>: <span class="str">config.yaml</span>
+        <span class="key">livenessProbe</span>:
+          <span class="key">httpGet</span>:
+            <span class="key">path</span>: <span class="str">/health/liveliness</span>
+            <span class="key">port</span>: <span class="num">4000</span>
+          <span class="key">initialDelaySeconds</span>: <span class="num">120</span>
+        <span class="key">readinessProbe</span>:
+          <span class="key">httpGet</span>:
+            <span class="key">path</span>: <span class="str">/health/readiness</span>
+            <span class="key">port</span>: <span class="num">4000</span>
+          <span class="key">initialDelaySeconds</span>: <span class="num">120</span>
+        <span class="key">resources</span>:
+          <span class="key">requests</span>:
+            <span class="key">cpu</span>: <span class="str">"2"</span>
+            <span class="key">memory</span>: <span class="str">4Gi</span>
+          <span class="key">limits</span>:
+            <span class="key">cpu</span>: <span class="str">"4"</span>
+            <span class="key">memory</span>: <span class="str">8Gi</span>
+      <span class="key">volumes</span>:
+      - <span class="key">name</span>: <span class="str">config</span>
+        <span class="key">configMap</span>:
+          <span class="key">name</span>: <span class="str">litellm-config</span></pre>
+      </div>
+
+      <div class="panel to">
+        <div class="panel-header">&#10003; AgentGateway Deployment</div>
+<pre><span class="key">apiVersion</span>: <span class="str">apps/v1</span>
+<span class="key">kind</span>: <span class="str">Deployment</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">agentgateway</span>
+<span class="key">spec</span>:
+  <span class="key">replicas</span>: <span class="num">2</span>
+  <span class="key">selector</span>:
+    <span class="key">matchLabels</span>:
+      <span class="key">app</span>: <span class="str">agentgateway</span>
+  <span class="key">template</span>:
+    <span class="key">spec</span>:
+      <span class="key">containers</span>:
+      - <span class="key">name</span>: <span class="str">agentgateway</span>
+        <span class="key">image</span>: <span class="str">cr.agentgateway.dev/agentgateway:latest</span>
+        <span class="key">args</span>: [<span class="str">"-f"</span>, <span class="str">"/config/config.yaml"</span>]
+        <span class="key">ports</span>:
+        - <span class="key">containerPort</span>: <span class="num">4000</span>
+          <span class="key">name</span>: <span class="str">llm</span>
+        - <span class="key">containerPort</span>: <span class="num">15000</span>
+          <span class="key">name</span>: <span class="str">admin</span>
+        <span class="key">envFrom</span>:
+        - <span class="key">secretRef</span>:
+            <span class="key">name</span>: <span class="str">agentgateway-secrets</span>
+        <span class="key">volumeMounts</span>:
+        - <span class="key">name</span>: <span class="str">config</span>
+          <span class="key">mountPath</span>: <span class="str">/config</span>
+        <span class="key">livenessProbe</span>:
+          <span class="key">httpGet</span>:
+            <span class="key">path</span>: <span class="str">/healthz</span>
+            <span class="key">port</span>: <span class="num">15000</span>
+          <span class="key">initialDelaySeconds</span>: <span class="num">5</span>
+        <span class="key">readinessProbe</span>:
+          <span class="key">httpGet</span>:
+            <span class="key">path</span>: <span class="str">/healthz</span>
+            <span class="key">port</span>: <span class="num">15000</span>
+          <span class="key">initialDelaySeconds</span>: <span class="num">5</span>
+        <span class="key">resources</span>:
+          <span class="key">requests</span>:
+            <span class="key">cpu</span>: <span class="str">"250m"</span>
+            <span class="key">memory</span>: <span class="str">128Mi</span>
+          <span class="key">limits</span>:
+            <span class="key">cpu</span>: <span class="str">"1"</span>
+            <span class="key">memory</span>: <span class="str">512Mi</span>
+      <span class="key">volumes</span>:
+      - <span class="key">name</span>: <span class="str">config</span>
+        <span class="key">configMap</span>:
+          <span class="key">name</span>: <span class="str">agentgateway-config</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Option 2: Helm + Gateway API -->
+  <section>
+    <h2>Option 2: Helm + Gateway API (Recommended)</h2>
+    <p>For production Kubernetes deployments, AgentGateway integrates with the Kubernetes Gateway API through its control plane (kgateway).</p>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Install AgentGateway with Helm</h4>
+<pre><span class="cmt"># Add the Helm repository</span>
+helm repo add agentgateway https://agentgateway.dev/charts
+helm repo update
+
+<span class="cmt"># Install the control plane + data plane</span>
+helm install agentgateway agentgateway/agentgateway \
+  --namespace agentgateway-system \
+  --create-namespace</pre>
+      </div>
+
+      <div class="step">
+        <h4>Create a Gateway resource</h4>
+<pre><span class="key">apiVersion</span>: <span class="str">gateway.networking.k8s.io/v1</span>
+<span class="key">kind</span>: <span class="str">Gateway</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">ai-gateway</span>
+  <span class="key">namespace</span>: <span class="str">default</span>
+<span class="key">spec</span>:
+  <span class="key">gatewayClassName</span>: <span class="str">agentgateway</span>
+  <span class="key">listeners</span>:
+  - <span class="key">name</span>: <span class="str">llm</span>
+    <span class="key">port</span>: <span class="num">4000</span>
+    <span class="key">protocol</span>: <span class="val">HTTP</span></pre>
+      </div>
+
+      <div class="step">
+        <h4>Define backends with CRDs</h4>
+<pre><span class="key">apiVersion</span>: <span class="str">agentgateway.dev/v1alpha1</span>
+<span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">openai</span>
+<span class="key">spec</span>:
+  <span class="key">ai</span>:
+    <span class="key">provider</span>:
+      <span class="key">openai</span>:
+        <span class="key">model</span>: <span class="str">"gpt-4o"</span>
+  <span class="key">policies</span>:
+    <span class="key">auth</span>:
+      <span class="key">secretRef</span>:
+        <span class="key">name</span>: <span class="str">openai-secret</span>
+---
+<span class="key">apiVersion</span>: <span class="str">agentgateway.dev/v1alpha1</span>
+<span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">anthropic</span>
+<span class="key">spec</span>:
+  <span class="key">ai</span>:
+    <span class="key">provider</span>:
+      <span class="key">anthropic</span>:
+        <span class="key">model</span>: <span class="str">"claude-sonnet-4-20250514"</span>
+  <span class="key">policies</span>:
+    <span class="key">auth</span>:
+      <span class="key">secretRef</span>:
+        <span class="key">name</span>: <span class="str">anthropic-secret</span></pre>
+      </div>
+
+      <div class="step">
+        <h4>Create HTTPRoute to wire it together</h4>
+<pre><span class="key">apiVersion</span>: <span class="str">gateway.networking.k8s.io/v1</span>
+<span class="key">kind</span>: <span class="str">HTTPRoute</span>
+<span class="key">metadata</span>:
+  <span class="key">name</span>: <span class="str">llm-route</span>
+<span class="key">spec</span>:
+  <span class="key">parentRefs</span>:
+  - <span class="key">name</span>: <span class="str">ai-gateway</span>
+  <span class="key">rules</span>:
+  - <span class="key">backendRefs</span>:
+    - <span class="key">group</span>: <span class="str">agentgateway.dev</span>
+      <span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
+      <span class="key">name</span>: <span class="str">openai</span>
+    - <span class="key">group</span>: <span class="str">agentgateway.dev</span>
+      <span class="key">kind</span>: <span class="str">AgentgatewayBackend</span>
+      <span class="key">name</span>: <span class="str">anthropic</span></pre>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Why Gateway API?</strong>
+      Using Gateway API CRDs means your AI gateway integrates with the same infrastructure tooling as your HTTP gateways. Config changes are dynamic (xDS push), no restart needed. You also get RBAC, multi-tenancy, and fleet management built in.
+    </div>
+  </section>
+
+  <!-- Migration Checklist -->
+  <section>
+    <h2>K8s Migration Checklist</h2>
+
+    <div class="steps">
+      <div class="step">
+        <h4>Translate ConfigMap contents</h4>
+        <p>Convert your LiteLLM <code>config.yaml</code> to AgentGateway format (see <a href="llm-gateway.html">LLM Gateway</a> and <a href="mcp-gateway.html">MCP Gateway</a> pages).</p>
+      </div>
+      <div class="step">
+        <h4>Update Secrets</h4>
+        <p>Remove <code>LITELLM_MASTER_KEY</code>. Keep <code>OPENAI_API_KEY</code> and <code>ANTHROPIC_API_KEY</code> (same names work).</p>
+      </div>
+      <div class="step">
+        <h4>Swap the Deployment</h4>
+        <p>Change image, args, resource limits, and probes. Drop <code>initialDelaySeconds</code> from 120s to 5s.</p>
+      </div>
+      <div class="step">
+        <h4>Update Service</h4>
+        <p>Add admin port (15000) if you want the built-in UI. LLM port stays at 4000.</p>
+      </div>
+      <div class="step">
+        <h4>Verify</h4>
+        <p>Run the same curl test against the Service. No client changes needed.</p>
+<pre>kubectl port-forward svc/agentgateway 4000:4000 &amp;
+
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="btn-group">
+      <a href="binary.html" class="btn btn-primary">Next: Binary Deployment &rarr;</a>
+      <a href="mcp-gateway.html" class="btn btn-outline">&larr; MCP Gateway</a>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <p>AgentGateway is a <a href="https://agentgateway.dev">Linux Foundation project</a>. This migration guide is community-maintained.</p>
+</footer>
+
+</body>
+</html>

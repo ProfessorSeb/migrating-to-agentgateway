@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Migrate to AgentGateway OSS</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo">
+      <span>&gt;_</span> Migrate to AgentGateway
+    </div>
+    <ul>
+      <li><a href="index.html" class="active">Home</a></li>
+      <li><a href="llm-gateway.html">LLM Gateway</a></li>
+      <li><a href="mcp-gateway.html">MCP Gateway</a></li>
+      <li><a href="kubernetes.html">Kubernetes</a></li>
+      <li><a href="binary.html">Binary</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="badge">Migration Guide</span>
+  <h1>Migrate from LiteLLM<br>to AgentGateway OSS</h1>
+  <p>Replace your LLM proxy and MCP gateway with a single, high-performance Rust-based gateway. Same OpenAI-compatible API, better performance, more features.</p>
+  <div class="btn-group" style="justify-content: center;">
+    <a href="llm-gateway.html" class="btn btn-primary">LLM Gateway Migration</a>
+    <a href="mcp-gateway.html" class="btn btn-outline">MCP Gateway Migration</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Why Migrate -->
+  <section>
+    <h2>Why Migrate?</h2>
+    <p>AgentGateway OSS is a Linux Foundation project that unifies LLM routing, MCP tool aggregation, and agent-to-agent connectivity in a single binary.</p>
+
+    <div class="cards">
+      <div class="card">
+        <span class="icon">&#9889;</span>
+        <h3>Rust Performance</h3>
+        <p>Written in Rust. Lower latency, lower memory footprint. Runs on 128MB RAM vs LiteLLM's 8GB recommendation.</p>
+      </div>
+      <div class="card">
+        <span class="icon">&#128279;</span>
+        <h3>Unified Gateway</h3>
+        <p>LLM proxy + MCP gateway + A2A in one binary. No more stitching together separate tools for each protocol.</p>
+      </div>
+      <div class="card">
+        <span class="icon">&#128274;</span>
+        <h3>Enterprise Security</h3>
+        <p>JWT auth, CEL-based authorization, prompt guards, PII detection, and per-tool access control out of the box.</p>
+      </div>
+      <div class="card">
+        <span class="icon">&#9881;</span>
+        <h3>Kubernetes Native</h3>
+        <p>Built on Gateway API with CRDs, xDS dynamic config, and Helm charts. No Python runtime in your cluster.</p>
+      </div>
+      <div class="card">
+        <span class="icon">&#128200;</span>
+        <h3>OpenTelemetry Built-in</h3>
+        <p>Native OTLP tracing, metrics, and structured access logs. No callback plugins needed.</p>
+      </div>
+      <div class="card">
+        <span class="icon">&#128260;</span>
+        <h3>Drop-in Compatible</h3>
+        <p>Same OpenAI-compatible API on the same port. Your client code doesn't change - just swap the proxy.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Comparison -->
+  <section>
+    <h2>At a Glance</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>LiteLLM</th>
+          <th>AgentGateway OSS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Language</td><td>Python</td><td>Rust</td></tr>
+        <tr><td>Memory (production)</td><td>8 GB recommended</td><td>128-512 MB</td></tr>
+        <tr><td>Startup time</td><td>~120s (readiness probe)</td><td>~5s</td></tr>
+        <tr><td>LLM Proxy</td><td>OpenAI-compatible</td><td>OpenAI-compatible</td></tr>
+        <tr><td>MCP Gateway</td><td>Yes (v1.80.18+)</td><td>Yes (native, with fan-out)</td></tr>
+        <tr><td>A2A Protocol</td><td>No</td><td>Yes</td></tr>
+        <tr><td>Provider failover</td><td><code>fallbacks</code> list</td><td><code>groups</code> with auto-eviction</td></tr>
+        <tr><td>Auth</td><td>Master key + virtual keys</td><td>JWT + CEL RBAC + ExtAuthz</td></tr>
+        <tr><td>Observability</td><td>Callbacks/plugins</td><td>Native OpenTelemetry</td></tr>
+        <tr><td>Config format</td><td>YAML (Python dict)</td><td>YAML (JSON Schema validated)</td></tr>
+        <tr><td>K8s deployment</td><td>Deployment + ConfigMap</td><td>Gateway API CRDs + Helm</td></tr>
+        <tr><td>Dynamic config</td><td>DB-backed</td><td>xDS / file watch (hot reload)</td></tr>
+        <tr><td>Admin UI</td><td>Dashboard (separate)</td><td>Built-in at :15000/ui</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Traffic Flow -->
+  <section>
+    <h2>Architecture: Before & After</h2>
+
+    <h3>Before: LiteLLM</h3>
+    <div class="flow">
+      <div class="flow-box">Client / Agent</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box highlight">LiteLLM Proxy<br><small>:4000</small></div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box">OpenAI</div>
+      <span class="flow-arrow">/</span>
+      <div class="flow-box">Anthropic</div>
+    </div>
+    <div class="flow" style="margin-top: .5rem;">
+      <div class="flow-box">MCP Client</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box highlight">LiteLLM MCP<br><small>:4000/mcp</small></div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box">MCP Servers</div>
+    </div>
+
+    <h3>After: AgentGateway OSS</h3>
+    <div class="flow">
+      <div class="flow-box">Client / Agent</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box highlight" style="border-color: var(--green);">AgentGateway<br><small>:4000</small></div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box">OpenAI</div>
+      <span class="flow-arrow">/</span>
+      <div class="flow-box">Anthropic</div>
+    </div>
+    <div class="flow" style="margin-top: .5rem;">
+      <div class="flow-box">MCP Client</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box highlight" style="border-color: var(--green);">AgentGateway<br><small>:3000</small></div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-box">MCP Servers</div>
+    </div>
+    <div class="callout tip">
+      <strong>Zero client changes</strong>
+      Both LiteLLM and AgentGateway expose the same OpenAI-compatible API. Point your <code>base_url</code> to AgentGateway and everything works.
+    </div>
+  </section>
+
+  <!-- Migration Paths -->
+  <section>
+    <h2>Choose Your Migration Path</h2>
+
+    <div class="cards">
+      <a href="llm-gateway.html" class="card" style="text-decoration:none;">
+        <span class="icon">&#129302;</span>
+        <h3>LLM Gateway Migration</h3>
+        <p>Migrate your LiteLLM proxy config (OpenAI/Anthropic model routing, fallbacks, load balancing) to AgentGateway.</p>
+      </a>
+      <a href="mcp-gateway.html" class="card" style="text-decoration:none;">
+        <span class="icon">&#128295;</span>
+        <h3>MCP Gateway Migration</h3>
+        <p>Migrate your MCP server configuration (stdio, remote, tool access) from LiteLLM to AgentGateway's native MCP support.</p>
+      </a>
+      <a href="kubernetes.html" class="card" style="text-decoration:none;">
+        <span class="icon">&#9784;</span>
+        <h3>Kubernetes Deployment</h3>
+        <p>Replace LiteLLM Deployments/ConfigMaps with AgentGateway Helm charts and Gateway API CRDs.</p>
+      </a>
+      <a href="binary.html" class="card" style="text-decoration:none;">
+        <span class="icon">&#128187;</span>
+        <h3>Binary / Docker</h3>
+        <p>Swap the LiteLLM Python process for a single AgentGateway binary. No runtime dependencies.</p>
+      </a>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <p>AgentGateway is a <a href="https://agentgateway.dev">Linux Foundation project</a>. This migration guide is community-maintained.</p>
+</footer>
+
+</body>
+</html>

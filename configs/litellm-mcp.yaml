@@ -1,0 +1,33 @@
+# LiteLLM Proxy Configuration with MCP Servers
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+mcp_servers:
+  # Stdio-based MCP server
+  everything_mcp:
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-everything"]
+
+  # Remote MCP server via SSE
+  remote_mcp:
+    url: "https://my-mcp-server.example.com/mcp"
+    auth_type: "api_key"
+    static_headers:
+      X-API-Key: "my-secret-key"
+
+  # GitHub MCP server
+  github_mcp:
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: os.environ/GITHUB_TOKEN
+
+general_settings:
+  master_key: sk-1234
+  store_model_in_db: true
